@@ -28,6 +28,10 @@
 #include "error_log.h"
 #include "secrets.h"
 
+#ifdef CONFIG_PM_ENABLE
+#include "esp_pm.h"
+#endif
+
 #include "wifi_manager.h"
 #include "openclaw_client.h"
 #include "tts_client.h"
@@ -269,14 +273,27 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "Board: %s (%s)", board_get_name(), board_get_mcu());
 
+    /* Configure power management — CPU frequency scaling */
+#ifdef CONFIG_PM_ENABLE
+    esp_pm_config_t pm_config = {
+        .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+        .min_freq_mhz = 80,
+        .light_sleep_enable = false,  /* Don't auto-sleep — WiFi needs active CPU */
+    };
+    ret = esp_pm_configure(&pm_config);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "PM: CPU scaling %d-%dMHz", 80, CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
+    } else {
+        ESP_LOGW(TAG, "PM configure failed: %s", esp_err_to_name(ret));
+    }
+#endif
+
     board_audio_set_volume(cfg->volume);
     board_display_set_brightness(cfg->brightness);
 
-    /* Camera init (non-critical, continue if fails) */
-    ret = camera_init();
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Camera init failed: %s — camera features disabled", esp_err_to_name(ret));
-    }
+    /* Camera init deferred to first use (saves ~5-10mA from SSCMA background tasks) */
+    ESP_LOGI(TAG, "Camera: deferred to first use (power saving)");
+    (void)ret;  /* camera_init() will be called on first CAMERA_BIT */
 
     /* RGB */
     board_rgb_task_start();
@@ -482,6 +499,18 @@ void app_main(void)
         if (ev & CAMERA_BIT) {
             app_reset_activity_timer();
             ESP_LOGI(TAG, "Camera capture requested");
+            /* Lazy init: initialize camera on first use */
+            if (!camera_is_ready()) {
+                ui_set_status_message("Starting camera...");
+                ret = camera_init();
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Camera init failed: %s", esp_err_to_name(ret));
+                    ui_set_status_message("Camera not available");
+                    vTaskDelay(pdMS_TO_TICKS(1500));
+                    if (ui_get_state() == UI_STATE_BOOT) app_set_state(UI_STATE_IDLE);
+                    continue;
+                }
+            }
             if (!camera_is_ready()) {
                 ui_set_status_message("Camera not ready");
                 vTaskDelay(pdMS_TO_TICKS(1500));

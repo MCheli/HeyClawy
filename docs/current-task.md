@@ -1,6 +1,48 @@
-# Current Task: MVP18 - All Issues Resolved ✅
+# Current Task: Power Optimization — Battery Life Extension
 
-## Status: COMPLETE — commit 8dc843c
+## Status: IN PROGRESS
+
+## Session 29 — Comprehensive Power Optimization
+
+### Implemented
+1. **Pause wake word during sleep** (~15-25mA savings):
+   - New `wake_word_in_sleep` setting (default: false = save battery)
+   - Wake word paused on sleep entry, resumed on wake
+   - NVS persisted, JSON export/import, WebUI configurable
+
+2. **LVGL timer stop during sleep** (~3-5mA savings):
+   - `lvgl_port_stop()` on sleep entry, `lvgl_port_resume()` on wake
+   - No display updates needed when screen is off
+
+3. **SSCMA camera lazy init** (~5-10mA continuous savings):
+   - Camera init deferred from boot to first CAMERA_BIT event
+   - SSCMA process + monitor tasks don't run until needed
+   - ~500ms startup on first capture (acceptable trade-off)
+
+4. **CPU frequency scaling (CONFIG_PM_ENABLE)** (~10-20mA savings):
+   - DFS: CPU scales 80-160MHz based on load
+   - `esp_pm_configure()` called after board init
+   - Light sleep disabled (WiFi needs active CPU)
+
+5. **Status task slow polling** (~2-3mA savings):
+   - Sleep mode: 2s loop (was 500ms), skips all UI work
+   - Only runs: external activity check, reconnect watchdog, task polling (60s)
+   - Awake mode: unchanged 500ms loop
+
+6. **Complete sleep lifecycle** — all consumers managed:
+   - Entry: display off → LED off → LVGL stop → wake word pause → WiFi MAX_MODEM
+   - Wake: WiFi MIN_MODEM → wake word resume → LVGL resume → display on → LED on
+
+### Estimated Impact (SenseCAP Watcher)
+- **Before**: ~100-150mA idle → 2.5-4 hours on 400mAh
+- **After (awake idle)**: ~60-80mA → 5-7 hours
+- **After (sleeping)**: ~40-60mA → 7-10 hours
+
+### Verified
+- SenseCAP (COM3): flashed, boots, PM active, camera deferred, sleep lifecycle works ✅
+- M5Stick: builds cleanly ✅
+
+### Commits: pending
 
 ## Session 28 — Reconnect Fix + Uptime Text Removal + Verification
 

@@ -17,7 +17,7 @@ _Photo will be added to `img/` in the next update. This board is already support
 ### Live Demo (SenseCAP)
 ![SenseCAP Live Demo](img/SenseCap_Demo.gif)
 
-## Main Features (Why It Is Helpful)
+## Main Features
 
 - Voice commands feel natural: press once (or use wake word), speak, get a spoken response.
 - Wake word support is built in (default WakeNet model is `Hey Jarvis`).
@@ -34,14 +34,15 @@ _Photo will be added to `img/` in the next update. This board is already support
 ### Development machine
 
 - Windows (batch scripts included), Linux, or macOS
-- ESP-IDF `v5.5+`
+- ESP-IDF `v5.5+` (use vscode esp-idf extension)
 - USB cable for flashing
+- One of the supported devices (SenseCAP Watcher, M5StickCPlus2, Waveshare Audio Board)
 
 ### OpenClaw machine (same LAN as the device)
 
 - OpenClaw gateway running and reachable (`ws://<host>:18789`)
 - STT service (faster-whisper HTTP endpoint, default port `5051`)
-- TTS service (OpenAI-compatible EdgeTTS endpoint, default port `5050`)
+- TTS service (OpenAI-compatible EdgeTTS endpoint, default port `5050`) 
 
 ### Simple EdgeTTS installation on the OpenClaw machine
 

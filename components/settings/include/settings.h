@@ -60,6 +60,7 @@ typedef struct {
 
     /* Power */
     uint32_t sleep_timeout_ms;     /* 0 = disabled */
+    bool     wake_word_in_sleep;   /* keep wake word active during light sleep */
 
     /* Web server */
     bool     webserver_enabled;    /* persisted on/off preference */

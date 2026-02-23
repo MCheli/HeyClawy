@@ -24,6 +24,9 @@
 #include "esp_heap_caps.h"
 #include "esp_sleep.h"
 #include "esp_wifi.h"
+#if BOARD_HAS_DISPLAY
+#include "esp_lvgl_port.h"
+#endif
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -441,6 +444,51 @@ static void status_update_task(void *arg)
     int carousel_tick = 0;
     int reconnect_ticks = 0;
     while (1) {
+        /* ── Sleep mode: minimal processing ────────────────────────── */
+        if (s_sleeping) {
+            /* Only check for external activity + reconnect watchdog during sleep.
+             * Skip all UI updates, RSSI, timers — saves CPU cycles. */
+            if (openclaw_get_state() == OPENCLAW_STATE_CONNECTED) {
+                if (openclaw_consume_external_activity()) {
+                    ESP_LOGI(TAG, "External OC activity detected during sleep — waking!");
+                    app_reset_activity_timer();
+                }
+                /* Slow poll during sleep — health comes from server push, only poll tasks */
+                if (++sleep_health_counter >= 30) {  /* Every 60s = 30 * 2000ms */
+                    sleep_health_counter = 0;
+                    openclaw_request_tasks();
+                }
+                /* Check health data for activity during sleep */
+                const openclaw_info_t *info = openclaw_get_info();
+                if (info->last_activity_sec < 15) {
+                    ESP_LOGI(TAG, "OC active (last=%ds) during sleep — waking!", info->last_activity_sec);
+                    app_reset_activity_timer();
+                }
+            }
+
+            /* Reconnect watchdog still runs during sleep */
+            {
+                openclaw_state_t oc_st = openclaw_get_state();
+                if (oc_st == OPENCLAW_STATE_DISCONNECTED || oc_st == OPENCLAW_STATE_ERROR ||
+                    oc_st == OPENCLAW_STATE_CONNECTING) {
+                    reconnect_ticks++;
+                    if (reconnect_ticks >= 15) {  /* 30s = 15 * 2000ms */
+                        reconnect_ticks = 0;
+                        ESP_LOGW(TAG, "Reconnect watchdog (sleep): forcing reconnect");
+                        openclaw_disconnect();
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                        openclaw_connect();
+                    }
+                } else {
+                    reconnect_ticks = 0;
+                }
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(2000));  /* 2s poll during sleep (was 500ms) */
+            continue;
+        }
+
+        /* ── Awake mode: full processing ───────────────────────────── */
         /* WiFi RSSI */
         if (wifi_manager_get_state() == WIFI_STATE_CONNECTED) {
             ui_set_wifi_status(true, wifi_manager_get_rssi());
@@ -466,27 +514,8 @@ static void status_update_task(void *arg)
             }
         }
 
-        /* Check for external activity even while sleeping — wake device */
-        if (s_sleeping && openclaw_get_state() == OPENCLAW_STATE_CONNECTED) {
-            if (openclaw_consume_external_activity()) {
-                ESP_LOGI(TAG, "External OC activity detected during sleep — waking!");
-                app_reset_activity_timer();  /* wakes display + LED */
-            }
-            /* Slow poll during sleep — health comes from server push, only poll tasks */
-            if (++sleep_health_counter >= 120) {  /* Every 60s = 120 * 500ms */
-                sleep_health_counter = 0;
-                openclaw_request_tasks();
-            }
-            /* Also check health data for activity during sleep */
-            const openclaw_info_t *info = openclaw_get_info();
-            if (info->last_activity_sec < 15) {
-                ESP_LOGI(TAG, "OC active (last=%ds) during sleep — waking!", info->last_activity_sec);
-                app_reset_activity_timer();
-            }
-        }
-
         /* Server info — full processing when awake */
-        if (openclaw_get_state() == OPENCLAW_STATE_CONNECTED && !s_sleeping) {
+        if (openclaw_get_state() == OPENCLAW_STATE_CONNECTED) {
             /* Consume flag if any (was set between sleeps) */
             openclaw_consume_external_activity();
 
@@ -599,10 +628,18 @@ void app_reset_activity_timer(void)
         const settings_t *cfg = settings_get();
         board_display_set_brightness(cfg->brightness);
         if (cfg->rgb_enabled) app_led_for_state(ui_get_state());
+#if BOARD_HAS_DISPLAY
+        /* Resume LVGL timer task */
+        lvgl_port_resume();
+#endif
 #if !defined(CONFIG_HEYCLAWY_BOARD_M5STICKCPLUS2)
         /* Restore faster WiFi PS when awake */
         esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 #endif
+        /* Resume wake word if it was paused for sleep */
+        if (!cfg->wake_word_in_sleep) {
+            wake_word_resume();
+        }
         ESP_LOGI(TAG, "Wake from light sleep (activity)");
     }
 }
@@ -701,6 +738,15 @@ static void sleep_task(void *arg)
                 s_last_wake_us = esp_timer_get_time();
                 board_display_set_brightness(cfg->brightness);
                 if (cfg->rgb_enabled) app_led_for_state(ui_get_state());
+#if BOARD_HAS_DISPLAY
+                lvgl_port_resume();
+#endif
+#if !defined(CONFIG_HEYCLAWY_BOARD_M5STICKCPLUS2)
+                esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+#endif
+                if (!cfg->wake_word_in_sleep) {
+                    wake_word_resume();
+                }
                 s_last_activity_us = esp_timer_get_time();
             }
             continue;
@@ -713,6 +759,17 @@ static void sleep_task(void *arg)
             /* Turn off display and LED to save power */
             board_display_set_brightness(0);
             board_rgb_animate(RGB_MODE_OFF, 0, 0, 0);
+
+#if BOARD_HAS_DISPLAY
+            /* Pause LVGL timer task — no display updates needed during sleep */
+            lvgl_port_stop();
+#endif
+
+            /* Pause wake word during sleep to save ~15-25mA (mic + neural net) */
+            if (!cfg->wake_word_in_sleep) {
+                wake_word_pause();
+                ESP_LOGI(TAG, "Wake word paused for sleep (use button to wake)");
+            }
 
 #if !defined(CONFIG_HEYCLAWY_BOARD_M5STICKCPLUS2)
             /* Switch to MAX_MODEM during sleep for better power savings */

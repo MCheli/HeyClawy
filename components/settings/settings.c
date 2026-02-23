@@ -36,6 +36,7 @@ static void apply_bare_defaults(settings_t *s)
     s->rgb_enabled         = true;
     s->startup_pattern     = 0;  /* rainbow */
     s->sleep_timeout_ms    = 60000;
+    s->wake_word_in_sleep  = false;  /* save battery by default */
     s->webserver_enabled   = false;
     s->activity_carousel   = true;
     s->auto_notify         = true;
@@ -85,6 +86,7 @@ static void load_from_nvs(settings_t *s)
     NVS_U8(h,  "log_verb",    log_verbosity);
 
     uint8_t tmp = 0;
+    if (nvs_get_u8(h, "ww_sleep", &tmp) == ESP_OK) s->wake_word_in_sleep = tmp;
     if (nvs_get_u8(h, "rgb_on", &tmp) == ESP_OK) s->rgb_enabled = tmp;
     if (nvs_get_u8(h, "start_pat", &tmp) == ESP_OK) s->startup_pattern = tmp;
     if (nvs_get_u8(h, "web_on", &tmp) == ESP_OK) s->webserver_enabled = tmp;
@@ -122,6 +124,7 @@ static esp_err_t save_to_nvs(const settings_t *s)
     nvs_set_u16(h, "nospeech_ms", s->no_speech_timeout_ms);
     nvs_set_u8(h,  "brightness",  s->brightness);
     nvs_set_u32(h, "sleep_ms",    s->sleep_timeout_ms);
+    nvs_set_u8(h,  "ww_sleep",   s->wake_word_in_sleep ? 1 : 0);
     nvs_set_u8(h,  "log_verb",    s->log_verbosity);
     nvs_set_u8(h,  "rgb_on",      s->rgb_enabled ? 1 : 0);
     nvs_set_u8(h,  "start_pat",   s->startup_pattern);
@@ -253,6 +256,7 @@ char *settings_to_json(bool include_secrets)
 
     /* Power */
     cJSON_AddNumberToObject(j, "sleep_timeout_ms", s->sleep_timeout_ms);
+    cJSON_AddBoolToObject(j, "wake_word_in_sleep", s->wake_word_in_sleep);
 
     /* Web server */
     cJSON_AddBoolToObject(j, "webserver_enabled", s->webserver_enabled);
@@ -324,6 +328,7 @@ esp_err_t settings_from_json(const char *json, size_t len)
     JSON_BOOL("rgb_enabled",     rgb_enabled);
     JSON_U8("startup_pattern",   startup_pattern);
     JSON_U32("sleep_timeout_ms", sleep_timeout_ms);
+    JSON_BOOL("wake_word_in_sleep", wake_word_in_sleep);
     JSON_BOOL("webserver_enabled", webserver_enabled);
     JSON_BOOL("activity_carousel", activity_carousel);
     JSON_BOOL("auto_notify",     auto_notify);

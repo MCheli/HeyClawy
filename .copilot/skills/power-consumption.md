@@ -111,12 +111,12 @@ esp_wifi_set_ps(WIFI_PS_MAX_MODEM);  // M5Stick: always MAX; SenseCap: MAX durin
 - Increases WiFi latency by ~100-300ms for incoming messages during sleep
 - In practice: no real-time events expected during display-off sleep anyway
 
-### 2. Pause Wake Word During Light Sleep
+### ✅ DONE — Pause Wake Word During Light Sleep
 **Impact**: MEDIUM (~15-25mA) | **Effort**: Low | **Trade-off**: Must press button to interact
-- Wake word detection continuously runs mic + neural net even during display-off sleep
-- Could pause detection when in light sleep, resume on button press
-- **Trade-off**: User must press knob/button instead of saying "Hey Jarvis" to wake
-- **Compromise**: Make this configurable in WebUI ("wake word during sleep: on/off")
+- Wake word detection paused when entering light sleep (mic + neural net stopped)
+- Controlled by `wake_word_in_sleep` setting (default: false = save battery)
+- Resumed automatically when device wakes (button press, external activity, serial command)
+- Users who prefer voice wake can enable via WebUI settings
 
 ### ✅ DONE — Reduce Knob Timer to 20ms (50Hz)
 **Impact**: LOW-MEDIUM (~5mA from reduced ISR overhead) | **Effort**: Trivial | **Trade-off**: None
@@ -125,27 +125,32 @@ esp_wifi_set_ps(WIFI_PS_MAX_MODEM);  // M5Stick: always MAX; SenseCap: MAX durin
 - Can also stop the timer entirely during light sleep (knob not needed)
 - **M5Stick**: No knob, not applicable
 
-### 4. Enable CONFIG_PM_ENABLE (CPU Frequency Scaling)
+### ✅ DONE — Enable CONFIG_PM_ENABLE (CPU Frequency Scaling)
 **Impact**: MEDIUM (~10-20mA) | **Effort**: Medium | **Trade-off**: Requires testing
 - Enables automatic CPU frequency scaling based on load
-- CPU drops to 80MHz or lower when idle tasks dominate
-- Requires `CONFIG_FREERTOS_HZ=1000` (already set)
-- **Risk**: May affect I2S timing, LVGL rendering, or WiFi stability
-- Must test thoroughly on all 3 boards
-- Cannot use true light sleep with WiFi connected (loses connection)
+- CPU drops to 80MHz when idle tasks dominate, ramps to 160MHz on demand
+- Configured via `esp_pm_configure()` after board init
+- `CONFIG_FREERTOS_HZ=1000` already set (required)
+- `light_sleep_enable=false` to avoid WiFi disconnection
 
-### 5. Stop LVGL Task During Sleep
+### ✅ DONE — Stop LVGL Task During Sleep
 **Impact**: LOW (~3-5mA) | **Effort**: Medium | **Trade-off**: Minor
-- LVGL runs its handler every 5ms even when display is off
-- Could pause LVGL timer during light sleep, resume on wake
-- Need `lvgl_port_lock()` to safely pause/resume
-- **Trade-off**: First frame after wake may be delayed 10-20ms
+- `lvgl_port_stop()` called when entering light sleep
+- `lvgl_port_resume()` called on wake (button, activity, serial)
+- No display updates needed during sleep — timer+task fully paused
 
-### 6. Stop SSCMA Tasks When Not In Use
+### ✅ DONE — Stop SSCMA Tasks When Not In Use
 **Impact**: LOW-MEDIUM (~5-10mA) | **Effort**: Medium | **Trade-off**: Camera startup delay
-- AI camera tasks run continuously but camera is rarely used
-- Could suspend/resume tasks on demand (when camera button pressed)
-- **Trade-off**: ~500ms startup delay when accessing camera
+- Camera initialization deferred to first use (not at boot)
+- SSCMA `process_task` + `monitor_task` don't run until camera button pressed
+- ~500ms startup delay on first camera capture (acceptable)
+- Saves power continuously for majority of device lifetime
+
+### ✅ DONE — Status Task Slow Polling During Sleep
+**Impact**: LOW (~2-3mA) | **Effort**: Trivial | **Trade-off**: None
+- Status update task: 500ms loop → 2000ms during sleep
+- Skips all UI updates, RSSI, thinking timer during sleep
+- Only checks: external activity wake, reconnect watchdog, task polling (60s)
 
 ### 7. Duty-Cycle WiFi During Deep Idle
 **Impact**: VERY HIGH (~80-100mA) | **Effort**: HIGH | **Trade-off**: Loss of real-time
@@ -181,9 +186,10 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=80
 ## SenseCAP Watcher Specific Notes
 - **400mAh battery** at estimated ~100-150mA idle = 2.5-4 hours
 - **Largest display** — backlight is significant power draw
-- **Wake word active** — mic + ESP-SR always running
-- **Camera tasks** — SSCMA always running
-- **Key wins**: WiFi optimization + pause wake word during sleep → ~80-100mA → 4-5 hours
+- **Wake word active** — mic + ESP-SR always running (now paused during sleep)
+- **Camera tasks** — SSCMA deferred to first use (was always running)
+- **Key wins**: WiFi optimization + pause wake word + SSCMA lazy + LVGL stop + DFS → ~60-80mA idle, ~40-60mA sleep
+- **Estimated runtime after optimizations**: 5-7 hours (idle), 8-10 hours (mostly sleeping)
 
 ## Power Measurement
 To accurately measure, use a USB power meter (e.g., Ruideng UM34C) between
@@ -200,8 +206,9 @@ USB cable and device. Monitor:
 2. ✅ Idle polling reduction (done)
 3. ✅ WiFi MAX_MODEM (done — M5Stick always, SenseCap dynamic with sleep)
 4. ✅ Knob timer 50Hz (done)
-5. Pause wake word during sleep (configurable)
-6. CONFIG_PM_ENABLE (needs testing)
-7. LVGL pause during sleep
-8. SSCMA suspend
-9. Battery saver deep idle mode (major feature)
+5. ✅ Pause wake word during sleep (configurable via `wake_word_in_sleep` setting)
+6. ✅ CONFIG_PM_ENABLE (CPU 160→80MHz DFS)
+7. ✅ LVGL pause during sleep
+8. ✅ SSCMA lazy init (camera deferred to first use)
+9. ✅ Status task slow polling (2s during sleep)
+10. Battery saver deep idle mode (major feature — future)
