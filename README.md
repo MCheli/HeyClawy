@@ -11,8 +11,10 @@ You talk to the device, it sends your request to OpenClaw in real time, and spea
 ### 2) M5StickC Plus2
 ![M5StickC Plus2](img/M5Stick.JPG)
 
-### 3) Waveshare ESP32-S3 Audio Board
-_Photo will be added to `img/` in the next update. This board is already supported in code._
+### 3) [Waveshare ESP32-S3 Audio Board](https://www.waveshare.com/esp32-s3-audio-board.htm)
+
+![WaveShare Audio Board](img/WaveShare_Audio_Board.JPG)
+
 
 ### Live Demo (SenseCAP)
 ![SenseCAP Live Demo](img/SenseCap_Demo.gif)
