@@ -1,0 +1,43 @@
+# Build artifacts
+build/
+sdkconfig
+sdkconfig.old
+
+# Managed components (downloaded by ESP-IDF component manager)
+managed_components/
+
+# Secrets
+main/include/secrets.h
+secrets.txt
+tools/heyclawy_device_key.bin
+tools/longlog.txt
+Copilot Instructions From First Prompt.txt
+
+# IDE files
+.vscode/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python
+__pycache__/
+*.pyc
+
+# Local test artifacts / captures
+*.log
+mic_capture.wav
+test_*.wav
+test_*.mp3
+test_*.raw
+cam_check.jpg
+tools/device_screen.jpg
+tools/screen_capture.jpg
+
+# Vendor-local binaries
+components/ed25519_lib/ed25519_32.dll
+components/ed25519_lib/ed25519_64.dll
+components/ed25519_lib/test.c
+components/ed25519_lib/.git-local-backup/

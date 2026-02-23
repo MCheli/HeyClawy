@@ -1,0 +1,29 @@
+# sdkconfig defaults for ESP32 targets (e.g., M5StickCPlus2)
+# These options reduce IRAM usage which is more constrained on ESP32.
+
+# Optimize for size instead of performance
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# Move WiFi functions out of IRAM
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+
+# Move FreeRTOS functions to flash
+CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y
+
+# Reduce HAL assertion overhead
+CONFIG_HAL_DEFAULT_ASSERTION_LEVEL=0
+
+# UART console (M5StickCPlus2 uses CH9102)
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# Flash size 8MB
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# PSRAM (2MB on M5StickCPlus2)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+
+# M5StickCPlus2 board selection
+CONFIG_HEYCLAWY_BOARD_M5STICKCPLUS2=y
