@@ -13,7 +13,7 @@ You talk to the device, it sends your request to OpenClaw in real time, and spea
 
 ### 3) [Waveshare ESP32-S3 Audio Board](https://www.waveshare.com/esp32-s3-audio-board.htm)
 
-![WaveShare Audio Board](img/WaveShare_Audio_Board.JPG)
+![WaveShare Audio Board](img/WaveShare_Audio_Board.PNG)
 
 
 ### Live Demo (SenseCAP)
