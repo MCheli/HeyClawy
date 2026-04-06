@@ -21,6 +21,11 @@ menu "HeyClawy Application Configuration"
             help
                 M5Stack M5StickCPlus2 (ESP32-PICO-V3-02, 135x240 ST7789V2, buzzer, PDM mic, 3 buttons, 8MB flash)
 
+        config HEYCLAWY_BOARD_ESP32S3BOX3
+            bool "ESP32-S3-BOX-3"
+            help
+                Espressif ESP32-S3-BOX-3 (320x240 ILI9341 display, GT911 touch, ES8311+ES7210 audio, 16MB flash)
+
         config HEYCLAWY_BOARD_GENERIC_ESP32S3
             bool "Generic ESP32-S3 (future)"
             help
@@ -32,6 +37,7 @@ menu "HeyClawy Application Configuration"
         default "sensecap_watcher" if HEYCLAWY_BOARD_SENSECAP_WATCHER
         default "waveshare_audio" if HEYCLAWY_BOARD_WAVESHARE_AUDIO
         default "m5stickcplus2" if HEYCLAWY_BOARD_M5STICKCPLUS2
+        default "esp32s3box3" if HEYCLAWY_BOARD_ESP32S3BOX3
         default "generic_esp32s3" if HEYCLAWY_BOARD_GENERIC_ESP32S3
 
     choice HEYCLAWY_WAKE_WORD_ENGINE

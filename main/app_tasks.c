@@ -494,6 +494,9 @@ static void status_update_task(void *arg)
             ui_set_wifi_status(true, wifi_manager_get_rssi());
         }
 
+        /* Battery status */
+        ui_set_battery_status(board_battery_get_percent(), board_battery_is_charging());
+
         /* Thinking timer + detail */
         if (ui_get_state() == UI_STATE_THINKING) {
             uint32_t think_ms = openclaw_get_thinking_time_ms();
@@ -724,6 +727,10 @@ static void sleep_task(void *arg)
                 while (board_knob_button_pressed()) {
                     vTaskDelay(pdMS_TO_TICKS(50));
                 }
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+            /* BOX-3: wake on BOOT button or touch screen tap */
+            if (board_boot_button_pressed() || board_user_button_pressed(1)) {
+                vTaskDelay(pdMS_TO_TICKS(200));  /* debounce */
 #elif BOARD_HAS_USER_BUTTONS
             if (board_boot_button_pressed()) {
                 while (board_boot_button_pressed()) {
@@ -749,6 +756,12 @@ static void sleep_task(void *arg)
                 }
                 s_last_activity_us = esp_timer_get_time();
             }
+            continue;
+        }
+
+        /* Skip sleep if battery is high (plugged in / nearly full) */
+        if (board_battery_get_percent() >= 95 || board_battery_is_charging()) {
+            s_last_activity_us = esp_timer_get_time();
             continue;
         }
 

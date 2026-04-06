@@ -28,6 +28,8 @@ extern "C" {
 #include "board_waveshare_audio.h"
 #elif defined(CONFIG_HEYCLAWY_BOARD_M5STICKCPLUS2)
 #include "board_m5stickcplus2.h"
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+#include "board_esp32s3box3.h"
 #elif defined(CONFIG_HEYCLAWY_BOARD_GENERIC_ESP32S3)
 #include "board_generic_esp32s3.h"
 #else

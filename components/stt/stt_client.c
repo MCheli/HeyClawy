@@ -100,14 +100,42 @@ esp_err_t stt_transcribe(const int16_t *pcm, size_t num_samples,
     ESP_LOGI(TAG, "WAV built: %u bytes (%u samples @ %dHz)",
              (unsigned)wav_len, (unsigned)num_samples, sample_rate);
 
-    /* Prepare URL */
+    /* Prepare URL — OpenAI-compatible endpoint */
     char url[128];
-    snprintf(url, sizeof(url), "http://%s:%d/transcribe", s_host, s_port);
+    snprintf(url, sizeof(url), "http://%s:%d/v1/audio/transcriptions", s_host, s_port);
+
+    /* Build multipart/form-data body in PSRAM */
+    static const char *boundary = "----HeyClawyBoundary";
+    const char *part_header =
+        "------HeyClawyBoundary\r\n"
+        "Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n"
+        "Content-Type: audio/wav\r\n\r\n";
+    const char *part_model =
+        "\r\n------HeyClawyBoundary\r\n"
+        "Content-Disposition: form-data; name=\"model\"\r\n\r\n"
+        "Systran/faster-whisper-small";
+    const char *part_end = "\r\n------HeyClawyBoundary--\r\n";
+
+    size_t hdr_len = strlen(part_header);
+    size_t mdl_len = strlen(part_model);
+    size_t end_len = strlen(part_end);
+    size_t body_len = hdr_len + wav_len + mdl_len + end_len;
+
+    uint8_t *body = heap_caps_malloc(body_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!body) {
+        free(wav);
+        return ESP_ERR_NO_MEM;
+    }
+    memcpy(body, part_header, hdr_len);
+    memcpy(body + hdr_len, wav, wav_len);
+    memcpy(body + hdr_len + wav_len, part_model, mdl_len);
+    memcpy(body + hdr_len + wav_len + mdl_len, part_end, end_len);
+    free(wav);
 
     /* Response buffer in PSRAM */
     char *resp_buf = heap_caps_calloc(1, 4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!resp_buf) {
-        free(wav);
+        free(body);
         return ESP_ERR_NO_MEM;
     }
 
@@ -123,13 +151,15 @@ esp_err_t stt_transcribe(const int16_t *pcm, size_t num_samples,
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
-        free(wav);
+        free(body);
         free(resp_buf);
         return ESP_FAIL;
     }
 
-    esp_http_client_set_header(client, "Content-Type", "audio/wav");
-    esp_http_client_set_post_field(client, (const char *)wav, wav_len);
+    char ct[80];
+    snprintf(ct, sizeof(ct), "multipart/form-data; boundary=%s", boundary);
+    esp_http_client_set_header(client, "Content-Type", ct);
+    esp_http_client_set_post_field(client, (const char *)body, body_len);
 
     int64_t t0 = esp_timer_get_time();
     esp_err_t err = esp_http_client_perform(client);
@@ -137,7 +167,7 @@ esp_err_t stt_transcribe(const int16_t *pcm, size_t num_samples,
 
     int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
-    free(wav);
+    free(body);
 
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "HTTP request failed: %s", esp_err_to_name(err));

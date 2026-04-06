@@ -105,6 +105,17 @@ LV_FONT_DECLARE(lv_font_hebrew_36);
   #define FONT_HEBREW  lv_font_hebrew_28     /* smallest available */
   #define FONT_HEB_BIG lv_font_hebrew_28
   #define CONTENT_W    220
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+  /* 320×240 rectangular display (ESP32-S3-BOX-3) */
+  #define FONT_BIG     lv_font_montserrat_36
+  #define FONT_BIG_SM  lv_font_montserrat_28
+  #define FONT_MED     lv_font_montserrat_20
+  #define FONT_SUB     lv_font_montserrat_16
+  #define FONT_INFO    lv_font_montserrat_14
+  #define FONT_TASK    lv_font_montserrat_14
+  #define FONT_HEBREW  lv_font_hebrew_28
+  #define FONT_HEB_BIG lv_font_hebrew_36
+  #define CONTENT_W    300
 #else
   /* 412×412 round display (SenseCAP Watcher) */
   #define FONT_BIG     lv_font_montserrat_48
@@ -739,6 +750,298 @@ esp_err_t ui_init(void)
     return ESP_OK;
 }
 
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3) /* 320×240 rectangular */
+
+/* ── Touch diagnostics — runs for 10 seconds at boot ─────────────────── */
+static lv_obj_t *s_diag_label = NULL;
+static lv_obj_t *s_diag_dot = NULL;
+static lv_obj_t *s_diag_hline = NULL;
+static lv_obj_t *s_diag_vline = NULL;
+
+static void diag_touch_cb(lv_event_t *e)
+{
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+
+    ESP_LOGI(TAG, "DIAG touch: lvgl=(%d,%d)", p.x, p.y);
+
+    if (s_diag_label) {
+        char buf[40];
+        snprintf(buf, sizeof(buf), "x=%d y=%d", p.x, p.y);
+        lv_label_set_text(s_diag_label, buf);
+    }
+    /* Move crosshair to tap position */
+    if (s_diag_dot) {
+        lv_obj_set_pos(s_diag_dot, p.x - 5, p.y - 5);
+        lv_obj_clear_flag(s_diag_dot, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_diag_hline) {
+        lv_obj_set_pos(s_diag_hline, 0, p.y);
+        lv_obj_clear_flag(s_diag_hline, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_diag_vline) {
+        lv_obj_set_pos(s_diag_vline, p.x, 0);
+        lv_obj_clear_flag(s_diag_vline, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void ui_touch_diagnostic(lv_disp_t *disp)
+{
+    if (!lvgl_port_lock(1000)) return;
+
+    lv_obj_t *scr = lv_disp_get_scr_act(disp);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+    /* Grid lines every 80px */
+    static const lv_color_t grid_color = {.full = 0x3333};
+    for (int x = 80; x < 320; x += 80) {
+        lv_obj_t *l = lv_obj_create(scr);
+        lv_obj_set_size(l, 1, 240);
+        lv_obj_set_pos(l, x, 0);
+        lv_obj_set_style_bg_color(l, grid_color, 0);
+        lv_obj_set_style_bg_opa(l, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(l, 0, 0);
+    }
+    for (int y = 60; y < 240; y += 60) {
+        lv_obj_t *l = lv_obj_create(scr);
+        lv_obj_set_size(l, 320, 1);
+        lv_obj_set_pos(l, 0, y);
+        lv_obj_set_style_bg_color(l, grid_color, 0);
+        lv_obj_set_style_bg_opa(l, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(l, 0, 0);
+    }
+
+    /* Corner labels */
+    static const struct { int x; int y; const char *txt; lv_text_align_t align; } corners[] = {
+        {  5,   5, "0,0 TL",   LV_TEXT_ALIGN_LEFT },
+        {315,   5, "319,0 TR",  LV_TEXT_ALIGN_RIGHT },
+        {  5, 225, "0,239 BL",  LV_TEXT_ALIGN_LEFT },
+        {315, 225, "319,239 BR",LV_TEXT_ALIGN_RIGHT },
+        {160, 120, "160,120 C", LV_TEXT_ALIGN_CENTER },
+    };
+    for (int i = 0; i < 5; i++) {
+        lv_obj_t *lb = lv_label_create(scr);
+        lv_label_set_text(lb, corners[i].txt);
+        lv_obj_set_style_text_color(lb, lv_color_hex(0x888888), 0);
+        lv_obj_set_style_text_font(lb, &lv_font_montserrat_12, 0);
+        lv_obj_set_pos(lb, corners[i].x, corners[i].y);
+    }
+
+    /* Corner target markers (10x10 white squares) */
+    static const int targets[][2] = {{0,0},{310,0},{0,230},{310,230}};
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *t = lv_obj_create(scr);
+        lv_obj_set_size(t, 10, 10);
+        lv_obj_set_pos(t, targets[i][0], targets[i][1]);
+        lv_obj_set_style_bg_color(t, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_opa(t, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(t, 0, 0);
+    }
+
+    /* Title */
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, "TOUCH TEST - Tap anywhere");
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 30);
+
+    /* Coordinate readout */
+    s_diag_label = lv_label_create(scr);
+    lv_label_set_text(s_diag_label, "Waiting for touch...");
+    lv_obj_set_style_text_color(s_diag_label, lv_color_hex(0xFFFF00), 0);
+    lv_obj_set_style_text_font(s_diag_label, &lv_font_montserrat_20, 0);
+    lv_obj_align(s_diag_label, LV_ALIGN_TOP_MID, 0, 55);
+
+    /* Crosshair dot (hidden until first tap) */
+    s_diag_dot = lv_obj_create(scr);
+    lv_obj_set_size(s_diag_dot, 10, 10);
+    lv_obj_set_style_bg_color(s_diag_dot, lv_color_hex(0xFF0000), 0);
+    lv_obj_set_style_bg_opa(s_diag_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_diag_dot, 0, 0);
+    lv_obj_set_style_radius(s_diag_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_add_flag(s_diag_dot, LV_OBJ_FLAG_HIDDEN);
+
+    /* Crosshair lines */
+    s_diag_hline = lv_obj_create(scr);
+    lv_obj_set_size(s_diag_hline, 320, 1);
+    lv_obj_set_style_bg_color(s_diag_hline, lv_color_hex(0xFF0000), 0);
+    lv_obj_set_style_bg_opa(s_diag_hline, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(s_diag_hline, 0, 0);
+    lv_obj_add_flag(s_diag_hline, LV_OBJ_FLAG_HIDDEN);
+
+    s_diag_vline = lv_obj_create(scr);
+    lv_obj_set_size(s_diag_vline, 1, 240);
+    lv_obj_set_style_bg_color(s_diag_vline, lv_color_hex(0xFF0000), 0);
+    lv_obj_set_style_bg_opa(s_diag_vline, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(s_diag_vline, 0, 0);
+    lv_obj_add_flag(s_diag_vline, LV_OBJ_FLAG_HIDDEN);
+
+    /* Touch callback */
+    lv_obj_add_event_cb(scr, diag_touch_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
+
+    lvgl_port_unlock();
+
+    ESP_LOGI(TAG, "Touch diagnostic screen active for 15 seconds. Tap the corners!");
+}
+
+esp_err_t ui_init(void)
+{
+    lv_disp_t *disp = board_get_lvgl_disp();
+    if (!disp) {
+        ESP_LOGE(TAG, "No LVGL display");
+        return ESP_FAIL;
+    }
+
+    if (!lvgl_port_lock(1000)) return ESP_FAIL;
+
+    s_scr = lv_disp_get_scr_act(disp);
+    lv_obj_set_style_bg_color(s_scr, C_BG, 0);
+    lv_obj_set_style_bg_opa(s_scr, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(s_scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* ── Status bar (top) ── */
+    s_status_bar = lv_obj_create(s_scr);
+    lv_obj_set_size(s_status_bar, 300, 24);
+    lv_obj_align(s_status_bar, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_set_style_bg_color(s_status_bar, C_BAR_BG, 0);
+    lv_obj_set_style_bg_opa(s_status_bar, LV_OPA_80, 0);
+    lv_obj_set_style_radius(s_status_bar, 6, 0);
+    lv_obj_set_style_border_width(s_status_bar, 1, 0);
+    lv_obj_set_style_border_color(s_status_bar, C_BORDER, 0);
+    lv_obj_set_style_border_opa(s_status_bar, LV_OPA_40, 0);
+    lv_obj_set_style_pad_hor(s_status_bar, 8, 0);
+    lv_obj_set_style_pad_ver(s_status_bar, 2, 0);
+    lv_obj_set_flex_flow(s_status_bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_status_bar, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(s_status_bar, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_wifi_label = lv_label_create(s_status_bar);
+    lv_label_set_text(s_wifi_label, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_color(s_wifi_label, C_TEXT_DIM, 0);
+    lv_obj_set_style_text_font(s_wifi_label, &lv_font_montserrat_12, 0);
+
+    s_oc_dot = lv_obj_create(s_status_bar);
+    lv_obj_set_size(s_oc_dot, 8, 8);
+    lv_obj_set_style_radius(s_oc_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_oc_dot, C_TEXT_DIM, 0);
+    lv_obj_set_style_bg_opa(s_oc_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_oc_dot, 0, 0);
+
+    s_batt_label = lv_label_create(s_status_bar);
+    lv_label_set_text(s_batt_label, LV_SYMBOL_BATTERY_FULL);
+    lv_obj_set_style_text_color(s_batt_label, C_TEXT_DIM, 0);
+    lv_obj_set_style_text_font(s_batt_label, &lv_font_montserrat_12, 0);
+
+    s_web_label = lv_label_create(s_status_bar);
+    lv_label_set_text(s_web_label, "");
+    lv_obj_set_style_text_color(s_web_label, C_TEXT_DIM, 0);
+    lv_obj_set_style_text_font(s_web_label, &lv_font_montserrat_12, 0);
+
+    /* ── Task / progress area ── */
+    s_task_label = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_task_label, &FONT_TASK, 0);
+    lv_obj_set_style_text_color(s_task_label, C_TEXT_DIM, 0);
+    lv_obj_set_style_text_align(s_task_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(s_task_label, CONTENT_W);
+    lv_obj_align(s_task_label, LV_ALIGN_TOP_MID, 0, 34);
+    lv_label_set_text(s_task_label, "");
+
+    /* ── Big center label (36pt status word) ── */
+    s_big_label = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_big_label, &FONT_BIG, 0);
+    lv_obj_set_style_text_color(s_big_label, C_TEXT, 0);
+    lv_obj_set_style_text_align(s_big_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(s_big_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_big_label, CONTENT_W);
+    lv_obj_set_style_max_height(s_big_label, 100, 0);
+    lv_obj_align(s_big_label, LV_ALIGN_CENTER, 0, -20);
+    lv_label_set_text(s_big_label, "BOOT");
+    lv_obj_add_flag(s_big_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_big_label, big_label_click_cb, LV_EVENT_CLICKED, NULL);
+
+    /* ── Sub label ── */
+    s_sub_label = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_sub_label, &FONT_MED, 0);
+    lv_obj_set_style_text_color(s_sub_label, C_TEXT_DIM, 0);
+    lv_obj_set_style_text_align(s_sub_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(s_sub_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_sub_label, CONTENT_W);
+    lv_obj_align_to(s_sub_label, s_big_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
+    lv_label_set_text(s_sub_label, "");
+
+    /* ── Info lines ── */
+    s_info_line1 = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_info_line1, &FONT_INFO, 0);
+    lv_obj_set_style_text_color(s_info_line1, C_TEXT_DIM, 0);
+    lv_obj_set_style_text_align(s_info_line1, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(s_info_line1, CONTENT_W);
+    lv_obj_align(s_info_line1, LV_ALIGN_CENTER, 0, 35);
+    lv_label_set_text(s_info_line1, "");
+
+    s_info_line2 = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_info_line2, &FONT_INFO, 0);
+    lv_obj_set_style_text_color(s_info_line2, C_TEXT_DIM, 0);
+    lv_obj_set_style_text_align(s_info_line2, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(s_info_line2, CONTENT_W);
+    lv_obj_align(s_info_line2, LV_ALIGN_CENTER, 0, 55);
+    lv_label_set_text(s_info_line2, "");
+
+    /* ── Bottom button bar (horizontal row, 320×240 rectangular) ── */
+    s_btn_bar = lv_obj_create(s_scr);
+    lv_obj_set_size(s_btn_bar, 320, 50);
+    lv_obj_align(s_btn_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_opa(s_btn_bar, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_btn_bar, 0, 0);
+    lv_obj_set_style_pad_all(s_btn_bar, 0, 0);
+    lv_obj_clear_flag(s_btn_bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(s_btn_bar, LV_OBJ_FLAG_CLICKABLE);
+
+    /* 2 centered buttons: play/details (hidden), cancel/camera */
+    #define BOX3_BTN_Y   3
+    static const int box3_btn_x[] = { 100, 178 };
+
+    s_play_btn = create_icon_btn(s_btn_bar, LV_SYMBOL_PLAY, C_TEAL, play_btn_cb);
+    lv_obj_set_pos(s_play_btn, box3_btn_x[0], BOX3_BTN_Y);
+    lv_obj_add_flag(s_play_btn, LV_OBJ_FLAG_HIDDEN);
+
+    s_details_btn = create_icon_btn(s_btn_bar, LV_SYMBOL_LIST, C_BLUE, details_btn_cb);
+    lv_obj_set_pos(s_details_btn, box3_btn_x[0], BOX3_BTN_Y);
+    lv_obj_add_flag(s_details_btn, LV_OBJ_FLAG_HIDDEN);
+
+    s_cancel_btn = create_icon_btn(s_btn_bar, LV_SYMBOL_CLOSE, C_RED, cancel_btn_cb);
+    lv_obj_set_pos(s_cancel_btn, box3_btn_x[1], BOX3_BTN_Y);
+    lv_obj_add_flag(s_cancel_btn, LV_OBJ_FLAG_HIDDEN);
+
+    /* Camera button shares position with cancel (hidden when cancel is shown) */
+    s_camera_btn = create_icon_btn(s_btn_bar, LV_SYMBOL_IMAGE, C_ORANGE, camera_btn_cb);
+    lv_obj_set_pos(s_camera_btn, box3_btn_x[1], BOX3_BTN_Y);
+
+    /* Web server button — bottom-right corner of screen (outside btn_bar) */
+    s_web_btn = create_icon_btn(s_scr, LV_SYMBOL_WIFI, C_BAR_BG, web_btn_cb);
+    lv_obj_align(s_web_btn, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+
+    /* Tasks button — hidden on BOX-3 (screen too small) */
+    s_tasks_btn = lv_obj_create(s_btn_bar);
+    lv_obj_add_flag(s_tasks_btn, LV_OBJ_FLAG_HIDDEN);
+
+    /* Thinking animation arcs */
+    ui_init_thinking_anim();
+
+    /* Screen-wide touch event for tick sound + activity reset */
+    lv_obj_add_event_cb(s_scr, screen_touch_cb, LV_EVENT_PRESSED, NULL);
+
+    lvgl_port_unlock();
+
+    s_full_response[0] = '\0';
+    ESP_LOGI(TAG, "UI initialized (rectangular 320x240)");
+    return ESP_OK;
+}
+
 #else /* SenseCAP Watcher (412×412 round display) */
 
 esp_err_t ui_init(void)
@@ -990,6 +1293,8 @@ void ui_set_state(ui_state_t state)
         lv_obj_set_style_text_font(s_sub_label, &FONT_MED, 0);
 #ifdef CONFIG_HEYCLAWY_BOARD_M5STICKCPLUS2
         lv_label_set_text(s_sub_label, "A:Talk B:Web C:Tasks");
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+        lv_label_set_text(s_sub_label, "Tap or say \"Hey Jarvis\"");
 #else
         lv_label_set_text(s_sub_label, "Tap or Wheel");
 #endif
@@ -1120,7 +1425,13 @@ void ui_set_battery_status(int percent, bool charging)
         icon = LV_SYMBOL_BATTERY_1;
         color = C_RED;
     }
-    lv_label_set_text(s_batt_label, icon);
+    char buf[16];
+    if (percent > 0) {
+        snprintf(buf, sizeof(buf), "%s %d%%", icon, percent);
+    } else {
+        snprintf(buf, sizeof(buf), "%s", icon);
+    }
+    lv_label_set_text(s_batt_label, buf);
     lv_obj_set_style_text_color(s_batt_label, color, 0);
     lvgl_port_unlock();
 }

@@ -17,11 +17,13 @@ set(BOARD_PRIV_REQUIRES
     esp_driver_uart
 )
 
-# ESP32-S3 boards need SPD2010 + IO expander
+# ESP32-S3 boards need display + touch + IO expander drivers
 if(IDF_TARGET STREQUAL "esp32s3")
     list(APPEND BOARD_REQUIRES
         esp_lcd_spd2010
         esp_lcd_touch_spd2010
+        esp_lcd_touch_gt911
+        esp_lcd_ili9341
     )
     list(APPEND BOARD_PRIV_REQUIRES
         esp_io_expander

@@ -41,6 +41,9 @@
 #include "esp_lcd_panel_ops.h"
 #if defined(CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER)
 #include "esp_lcd_spd2010.h"
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+#include "esp_lcd_ili9341.h"
+#include "esp_lcd_touch_gt911.h"
 #endif
 #include "esp_lcd_touch.h"
 #include "esp_lvgl_port.h"
@@ -62,7 +65,7 @@
 /* Board-specific codec headers */
 #if defined(CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER)
 #include "es7243e_adc.h"
-#elif defined(CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO)
+#elif defined(CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO) || defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
 #include "es7210_adc.h"
 #endif
 
@@ -120,7 +123,7 @@ const char *board_get_mcu(void)
 // I2C Bus Init
 // ============================================================================
 
-#if defined(CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER) || defined(CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO)
+#if defined(CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER) || defined(CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO) || defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
 
 static esp_err_t board_i2c0_init(void)
 {
@@ -164,6 +167,7 @@ static esp_err_t board_i2c1_init(void)
 // IO Expander (PCA9535 via TCA95xx driver)
 // ============================================================================
 
+#if BOARD_HAS_IO_EXPANDER
 static esp_err_t board_io_expander_init(void)
 {
     if (s_io_exp != NULL) return ESP_OK;
@@ -203,6 +207,7 @@ static esp_err_t board_io_expander_init(void)
     ESP_LOGI(TAG, "IO expander initialized at 0x%02X", BOARD_IO_EXP_ADDR);
     return ESP_OK;
 }
+#endif /* BOARD_HAS_IO_EXPANDER */
 
 #if defined(CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER)
 static esp_err_t board_power_on_sequence(void)
@@ -235,6 +240,9 @@ static esp_err_t board_power_on_sequence(void)
 esp_err_t board_rgb_init(void)
 {
     if (s_rgb_handle != NULL) return ESP_OK;
+#if BOARD_RGB_LED_COUNT == 0
+    return ESP_OK;  /* No RGB LED on this board */
+#endif
 
     led_strip_config_t strip_config = {
         .strip_gpio_num = BOARD_RGB_GPIO,
@@ -571,12 +579,14 @@ esp_err_t board_rgb_task_start(void)
 // ============================================================================
 #if BOARD_HAS_DISPLAY
 
+#if defined(CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER)
 static void lvgl_rounder_cb(lv_disp_drv_t *disp_drv, lv_area_t *area)
 {
     // SPD2010 requires x coords divisible by 4
     area->x1 = (area->x1 >> 2) << 2;
     area->x2 = ((area->x2 >> 2) << 2) + 3;
 }
+#endif
 
 esp_err_t board_display_init(void)
 {
@@ -602,6 +612,7 @@ esp_err_t board_display_init(void)
 
     ESP_LOGI(TAG, "Display backlight initialized (GPIO%d)", BOARD_LCD_BL);
 
+#if defined(CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER)
     // Initialize QSPI bus for LCD
     const spi_bus_config_t buscfg = SPD2010_PANEL_BUS_QSPI_CONFIG(
         BOARD_QSPI_PCLK,
@@ -639,6 +650,58 @@ esp_err_t board_display_init(void)
     ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_lcd_panel, true), TAG, "LCD on failed");
 
     ESP_LOGI(TAG, "LCD SPD2010 initialized (%dx%d QSPI)", BOARD_LCD_H_RES, BOARD_LCD_V_RES);
+
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+    // Initialize SPI bus for ILI9341 LCD
+    const spi_bus_config_t buscfg = {
+        .sclk_io_num = BOARD_LCD_SCLK,
+        .mosi_io_num = BOARD_LCD_MOSI,
+        .miso_io_num = GPIO_NUM_NC,
+        .quadwp_io_num = GPIO_NUM_NC,
+        .quadhd_io_num = GPIO_NUM_NC,
+        .max_transfer_sz = BOARD_LCD_H_RES * 80 * sizeof(uint16_t),
+    };
+    ESP_RETURN_ON_ERROR(spi_bus_initialize(BOARD_LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO), TAG, "LCD SPI init failed");
+
+    // Install panel IO
+    const esp_lcd_panel_io_spi_config_t io_config = {
+        .dc_gpio_num = BOARD_LCD_DC,
+        .cs_gpio_num = BOARD_LCD_CS,
+        .pclk_hz = BOARD_LCD_PIXEL_CLK_HZ,
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+        .spi_mode = 0,
+        .trans_queue_depth = 10,
+    };
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)BOARD_LCD_SPI_HOST, &io_config, &s_lcd_io),
+                        TAG, "LCD panel IO failed");
+
+    /* BOX-3 reset pin is active HIGH (inverted from typical).
+     * This resets both the LCD and the GT911 touch controller. */
+    gpio_config_t rst_cfg = {
+        .pin_bit_mask = (1ULL << BOARD_LCD_RST),
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&rst_cfg);
+    gpio_set_level(BOARD_LCD_RST, 1);  /* Assert reset (active HIGH) */
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level(BOARD_LCD_RST, 0);  /* Release reset */
+    vTaskDelay(pdMS_TO_TICKS(200));    /* Give LCD + GT911 time to boot */
+
+    // Install ILI9341 panel driver (reset already done manually)
+    const esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = GPIO_NUM_NC,  /* Already reset above */
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+        .bits_per_pixel = BOARD_LCD_BPP,
+    };
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_ili9341(s_lcd_io, &panel_config, &s_lcd_panel), TAG, "LCD panel create failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_init(s_lcd_panel), TAG, "LCD init failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(s_lcd_panel, true, true), TAG, "LCD mirror failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_lcd_panel, true), TAG, "LCD on failed");
+
+    ESP_LOGI(TAG, "LCD ILI9341 initialized (%dx%d SPI)", BOARD_LCD_H_RES, BOARD_LCD_V_RES);
+#endif /* board-specific display */
+
     return ESP_OK;
 }
 
@@ -653,11 +716,13 @@ esp_err_t board_display_set_brightness(int percent)
 }
 
 // ============================================================================
-// Touch Panel (SPD2010 touch on I2C1)
+// Touch Panel
 // ============================================================================
-// Custom driver using direct i2c_master API — the managed component's
-// esp_lcd_panel_io_rx_param() fails on ESP-IDF v5.5 because the new
-// i2c_master driver rejects zero-length writes in transmit_receive().
+
+#if defined(CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER)
+// SPD2010 touch on I2C1 — custom driver using direct i2c_master API.
+// The managed component's esp_lcd_panel_io_rx_param() fails on ESP-IDF v5.5
+// because the new i2c_master driver rejects zero-length writes in transmit_receive().
 
 static i2c_master_dev_handle_t s_touch_i2c_dev = NULL;
 
@@ -839,6 +904,57 @@ esp_err_t board_touch_init(void)
     return ESP_OK;
 }
 
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+
+esp_err_t board_touch_init(void)
+{
+    /* GT911 on I2C0 — match the working ESPHome setup:
+     * just interrupt pin, no reset, no address manipulation.
+     * BOX-3 GT911 uses 0x14 (INT is high/floating at boot). */
+    esp_lcd_panel_io_handle_t touch_io = NULL;
+    /* Try both GT911 addresses — create panel IO, attempt init, retry if needed */
+    static const uint8_t addrs[] = { 0x5D, 0x14 };
+    esp_err_t ret = ESP_FAIL;
+
+    for (int i = 0; i < 2; i++) {
+        esp_lcd_panel_io_i2c_config_t touch_io_cfg =
+            ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
+        touch_io_cfg.dev_addr = addrs[i];
+
+        ret = esp_lcd_new_panel_io_i2c(s_i2c0_bus, &touch_io_cfg, &touch_io);
+        if (ret != ESP_OK) continue;
+
+    const esp_lcd_touch_config_t touch_cfg = {
+        .x_max = BOARD_LCD_H_RES,
+        .y_max = BOARD_LCD_V_RES,
+        .rst_gpio_num = GPIO_NUM_NC,
+        .int_gpio_num = BOARD_TOUCH_INT,
+        .levels = {
+            .reset = 0,
+            .interrupt = 0,
+        },
+        .flags = {
+            .swap_xy = false,
+            .mirror_x = false,
+            .mirror_y = false,
+        },
+    };
+        ret = esp_lcd_touch_new_i2c_gt911(touch_io, &touch_cfg, &s_touch_handle);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Touch panel initialized (GT911 at 0x%02X)", addrs[i]);
+            return ESP_OK;
+        }
+        ESP_LOGW(TAG, "GT911 at 0x%02X failed (0x%x), trying next...", addrs[i], ret);
+        esp_lcd_panel_io_del(touch_io);
+        touch_io = NULL;
+    }
+
+    ESP_LOGW(TAG, "GT911 touch not found — touch disabled");
+    return ESP_ERR_NOT_FOUND;
+}
+
+#endif /* board-specific touch */
+
 // ============================================================================
 // LVGL Setup
 // ============================================================================
@@ -874,9 +990,11 @@ esp_err_t board_lvgl_init(void)
         return ESP_FAIL;
     }
 
+#if defined(CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER)
     // Install rounder callback for SPD2010
     lv_disp_drv_t *drv = s_lvgl_disp->driver;
     drv->rounder_cb = lvgl_rounder_cb;
+#endif
 
     // Add touch input
     if (s_touch_handle != NULL) {
@@ -1031,7 +1149,7 @@ esp_err_t board_audio_init(void)
         ESP_LOGW(TAG, "ES7243E codec create failed");
         return ESP_OK;
     }
-#elif defined(CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO)
+#elif defined(CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO) || defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
     /* ES7210 ADC (4-channel, dual mic array) */
     audio_codec_i2c_cfg_t mic_i2c_cfg = {
         .port = BOARD_I2C_PORT,
@@ -1234,7 +1352,14 @@ esp_err_t board_buttons_init(void)
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_RETURN_ON_ERROR(gpio_config(&io_conf), TAG, "Button GPIO config failed");
+#if defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+    /* Also configure MUTE button */
+    io_conf.pin_bit_mask = (1ULL << BOARD_MUTE_BUTTON);
+    ESP_RETURN_ON_ERROR(gpio_config(&io_conf), TAG, "Mute button GPIO config failed");
+    ESP_LOGI(TAG, "User buttons initialized (BOOT=%d, MUTE=%d)", BOARD_BOOT_BUTTON, BOARD_MUTE_BUTTON);
+#else
     ESP_LOGI(TAG, "User buttons initialized (BOOT=%d)", BOARD_BOOT_BUTTON);
+#endif
     return ESP_OK;
 }
 
@@ -1257,6 +1382,10 @@ bool board_user_button_pressed(int btn_num)
     uint32_t level = 0;
     esp_io_expander_get_level(s_io_exp, 1 << pin, &level);
     return (level & (1 << pin)) == 0;  // Active low
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+    /* Button 1 = MUTE (GPIO1), active low */
+    if (btn_num == 1) return gpio_get_level(BOARD_MUTE_BUTTON) == 0;
+    return false;
 #else
     (void)btn_num;
     return false;
@@ -1272,6 +1401,69 @@ bool board_user_button_pressed(int btn_num)
 esp_err_t board_sdcard_init(void) { ESP_LOGW(TAG, "SD card not yet implemented"); return ESP_OK; }
 esp_err_t board_sdcard_deinit(void) { return ESP_OK; }
 bool board_sdcard_is_inserted(void) { return false; }
+#if defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
+
+static adc_oneshot_unit_handle_t s_bat_adc_handle = NULL;
+static adc_cali_handle_t s_bat_adc_cali = NULL;
+static bool s_bat_adc_initialized = false;
+
+static void bat_adc_init(void)
+{
+    if (s_bat_adc_initialized) return;
+
+    adc_oneshot_unit_init_cfg_t unit_cfg = { .unit_id = ADC_UNIT_1 };
+    if (adc_oneshot_new_unit(&unit_cfg, &s_bat_adc_handle) != ESP_OK) return;
+
+    adc_oneshot_chan_cfg_t chan_cfg = {
+        .atten = BOARD_BAT_ADC_ATTEN,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    if (adc_oneshot_config_channel(s_bat_adc_handle, BOARD_BAT_ADC_CHANNEL, &chan_cfg) != ESP_OK) return;
+
+    /* Try curve fitting calibration */
+    adc_cali_curve_fitting_config_t cali_cfg = {
+        .unit_id = ADC_UNIT_1,
+        .chan = BOARD_BAT_ADC_CHANNEL,
+        .atten = BOARD_BAT_ADC_ATTEN,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    adc_cali_create_scheme_curve_fitting(&cali_cfg, &s_bat_adc_cali);
+    s_bat_adc_initialized = true;
+}
+
+uint16_t board_battery_get_voltage_mv(void)
+{
+    bat_adc_init();
+    if (!s_bat_adc_handle) return 0;
+
+    int raw = 0;
+    if (adc_oneshot_read(s_bat_adc_handle, BOARD_BAT_ADC_CHANNEL, &raw) != ESP_OK) return 0;
+
+    int mv = 0;
+    if (s_bat_adc_cali) {
+        adc_cali_raw_to_voltage(s_bat_adc_cali, raw, &mv);
+    } else {
+        mv = (raw * 3300) / 4095;
+    }
+    return (uint16_t)(mv * BOARD_BAT_VDIV_MULTIPLY);
+}
+
+uint8_t board_battery_get_percent(void)
+{
+    uint16_t mv = board_battery_get_voltage_mv();
+    if (mv == 0) return 0;
+    /* 18650 range: 3000mV (empty) to 4200mV (full) */
+    if (mv <= 3000) return 0;
+    if (mv >= 4200) return 100;
+    return (uint8_t)((mv - 3000) * 100 / 1200);
+}
+
+bool board_battery_is_charging(void) { return false; /* No charge detection pin */ }
+
+#else /* Non-BOX-3 boards */
 uint16_t board_battery_get_voltage_mv(void) { return 0; }
 uint8_t board_battery_get_percent(void) { return 0; }
 bool board_battery_is_charging(void)
@@ -1285,6 +1477,7 @@ bool board_battery_is_charging(void)
     return false;
 #endif
 }
+#endif /* CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3 */
 
 // ============================================================================
 // IO expander / SPI2 accessors
@@ -1332,13 +1525,23 @@ esp_err_t board_spi2_init(void)
 #endif /* BOARD_HAS_CAMERA */
 
 // ============================================================================
-// PA enable (Waveshare: via IO expander)
+// PA enable (Waveshare: IO expander, BOX-3: GPIO46)
 // ============================================================================
 #if defined(CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO)
 static esp_err_t board_pa_enable(bool enable)
 {
     if (s_io_exp == NULL) return ESP_ERR_INVALID_STATE;
     return esp_io_expander_set_level(s_io_exp, 1 << BOARD_IOEXP_PA_EN, enable ? 1 : 0);
+}
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+static esp_err_t board_pa_enable(bool enable)
+{
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << BOARD_PA_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&io_conf);
+    return gpio_set_level(BOARD_PA_GPIO, enable ? 1 : 0);
 }
 #endif
 
@@ -1354,18 +1557,20 @@ esp_err_t board_init(void)
 
     esp_err_t ret = ESP_OK;
 
-    // I2C0 (IO expander, codecs, RTC)
+    // I2C0 (codecs, touch, IO expander)
     ret = board_i2c0_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "I2C0 init failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
+#if BOARD_HAS_IO_EXPANDER
     // IO Expander
     ret = board_io_expander_init();
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "IO expander init failed: %s - continuing with limited functionality", esp_err_to_name(ret));
     }
+#endif
 
 #if defined(CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER)
     if (s_io_exp) {
@@ -1374,7 +1579,7 @@ esp_err_t board_init(void)
             ESP_LOGW(TAG, "Power-on sequence failed: %s", esp_err_to_name(ret));
         }
     }
-#elif defined(CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO)
+#elif defined(CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO) || defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
     // Enable PA for speaker output
     board_pa_enable(true);
 #endif
@@ -1506,6 +1711,12 @@ void board_prepare_deep_sleep(void)
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
+#elif defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+    /* Wake on BOOT button (GPIO0) press */
+    for (int i = 0; i < 100 && gpio_get_level(GPIO_NUM_0) == 0; i++) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
 #endif
 }
 
@@ -1514,7 +1725,7 @@ void board_reboot(void)
     esp_restart();
 }
 
-#endif /* CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER || CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO */
+#endif /* CONFIG_HEYCLAWY_BOARD_SENSECAP_WATCHER || CONFIG_HEYCLAWY_BOARD_WAVESHARE_AUDIO || CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3 */
 
 // ============================================================================
 // ██  M5StickC Plus2 Implementation

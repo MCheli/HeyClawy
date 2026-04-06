@@ -36,7 +36,11 @@ static void apply_bare_defaults(settings_t *s)
     s->rgb_enabled         = true;
     s->startup_pattern     = 0;  /* rainbow */
     s->sleep_timeout_ms    = 60000;
+#if defined(CONFIG_HEYCLAWY_BOARD_ESP32S3BOX3)
+    s->wake_word_in_sleep  = true;   /* BOX-3: keep listening during sleep */
+#else
     s->wake_word_in_sleep  = false;  /* save battery by default */
+#endif
     s->webserver_enabled   = false;
     s->activity_carousel   = true;
     s->auto_notify         = true;
