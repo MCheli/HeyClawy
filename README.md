@@ -1,131 +1,94 @@
-# HeyClawy
+# ESP32-S3-BOX-3 — HeyClawy Setup
 
-HeyClawy is a voice-first ESP32 companion for [OpenClaw](https://github.com/openclaw/openclaw).  
-You talk to the device, it sends your request to OpenClaw in real time, and speaks the response back.
+Voice assistant using ESP32-S3-BOX-3 → OpenClaw (via NGINX) with EdgeTTS + faster-whisper.
 
-## Supported Devices (Current 3)
+> Fork of [omeriko9/HeyClawy](https://github.com/omeriko9/HeyClawy) with ESP32-S3-BOX-3 board support added.
 
-### 1) SenseCAP Watcher
-![SenseCAP Watcher](img/SenseCAP.JPG)
+## Architecture
 
-### 2) M5StickC Plus2
-![M5StickC Plus2](img/M5Stick.JPG)
+```
+ESP32-S3-BOX-3 (mic/speaker/display)
+    ├── WebSocket → NGINX (ws://openclaw.ops.markcheli.com:80) → OpenClaw
+    ├── HTTP POST → faster-whisper (http://192.168.1.179:5051) — speech-to-text
+    └── HTTP GET  ← EdgeTTS (http://192.168.1.179:5050) — text-to-speech
+```
 
-### 3) [Waveshare ESP32-S3 Audio Board](https://www.waveshare.com/esp32-s3-audio-board.htm)
+## Server Services (PowerEdge at 192.168.1.179)
 
-![WaveShare Audio Board](img/WaveShare_Audio_Board.PNG)
+| Service | Port | Image | Purpose |
+|---------|------|-------|---------|
+| EdgeTTS | 5050 | `travisvn/openai-edge-tts` | Text-to-speech (OpenAI-compatible) |
+| faster-whisper | 5051 | `fedirz/faster-whisper-server` | Speech-to-text (Whisper small, CPU) |
+| OpenClaw | via NGINX:80 | `ghcr.io/openclaw/openclaw` | AI conversation agent |
 
+Server config lives in [83rr-poweredge](https://github.com/MCheli/83rr-poweredge) (`docker-compose.yml`).
 
-### Live Demo (SenseCAP)
-![SenseCAP Live Demo](img/SenseCap_Demo.gif)
+## Build & Flash
 
-## Main Features
-
-- Voice commands feel natural: press once (or use wake word), speak, get a spoken response.
-- Wake word support is built in (default WakeNet model is `Hey Jarvis`).
-- Real-time OpenClaw integration over WebSocket:
-  - chat responses
-  - live task updates
-  - cron notifications
-  - status and activity data
-- Works with both display devices and a screenless audio board.
-- Built-in local web settings page for quick tuning without reflashing every time.
-
-## Requirements
-
-### Development machine
-
-- Windows (batch scripts included), Linux, or macOS
-- ESP-IDF `v5.5+` (use vscode esp-idf extension)
-- USB cable for flashing
-- One of the supported devices (SenseCAP Watcher, M5StickCPlus2, Waveshare Audio Board)
-
-### OpenClaw machine (same LAN as the device)
-
-- OpenClaw gateway running and reachable (`ws://<host>:18789`)
-- STT service (faster-whisper HTTP endpoint, default port `5051`)
-- TTS service (OpenAI-compatible EdgeTTS endpoint, default port `5050`) 
-
-### Simple EdgeTTS installation on the OpenClaw machine
-
-Run:
+Requires ESP-IDF v5.5+ (`~/esp/esp-idf`).
 
 ```bash
-docker run -d --name openclaw-edgetts --restart unless-stopped -p 5050:5050 travisvn/openai-edge-tts
+git clone https://github.com/MCheli/HeyClawy.git
+cd HeyClawy
+
+# Create secrets (copy template and fill in values)
+cp main/include/secrets.h.example main/include/secrets.h
+# Edit secrets.h — see secrets section below
+
+# Build and flash
+source ~/esp/esp-idf/export.sh
+./build_box3.sh
+idf.py -p /dev/cu.usbmodem1101 flash
 ```
 
-Quick test:
+## secrets.h Values
+
+| Define | Value | Notes |
+|--------|-------|-------|
+| `SECRETS_WIFI_SSID` | Your WiFi SSID | 2.4GHz recommended |
+| `SECRETS_WIFI_PASSWORD` | Your WiFi password | |
+| `SECRETS_OPENCLAW_HOST` | `openclaw.ops.markcheli.com` | Via NGINX plain HTTP proxy |
+| `SECRETS_OPENCLAW_PORT` | `80` | NGINX port (not 18789 direct) |
+| `SECRETS_OPENCLAW_TOKEN` | Gateway auth token | From OpenClaw config |
+| `SECRETS_DEVICE_KEY_HEX` | 64-char hex ED25519 seed | Generate: `python3 -c "import os; print(os.urandom(32).hex())"` |
+| `SECRETS_TTS_HOST` | `192.168.1.179` | PowerEdge IP |
+| `SECRETS_TTS_PORT` | `5050` | EdgeTTS port |
+| `SECRETS_TTS_API_KEY` | `""` | Not needed for EdgeTTS |
+| `SECRETS_TTS_VOICE` | `en-US-AndrewNeural` | Or any Edge TTS voice |
+| `SECRETS_STT_HOST` | `192.168.1.179` | PowerEdge IP |
+| `SECRETS_STT_PORT` | `5051` | faster-whisper port |
+
+## Device Pairing
+
+After first flash, the device will connect to OpenClaw but get "pairing required". Approve on the server:
 
 ```bash
-curl -X POST "http://127.0.0.1:5050/v1/audio/speech" \
-  -H "Content-Type: application/json" \
-  -d "{\"model\":\"tts-1\",\"voice\":\"alloy\",\"input\":\"Hello from HeyClawy\"}" \
-  --output hello.mp3
+docker exec openclaw openclaw device approve <device-identity-hex>
 ```
 
-If `hello.mp3` is created, TTS is ready.
+The device identity is logged at boot and displayed in the serial monitor.
 
-## Build (Easy Path)
+## Hardware Notes
 
-From project root:
+- **Display**: ILI9341 320x240, reset pin GPIO48 is active HIGH (inverted)
+- **Touch**: GT911 at I2C address 0x14 (not the default 0x5D)
+- **Battery dock**: 18650 module reads via ADC on GPIO10, toggle switch must be ON
+- **Sleep**: Stays awake when battery >= 95% or charging; wake word active during sleep
+- **Wake word**: "Hey Jarvis" (WakeNet9 model)
 
-### SenseCAP Watcher
-```bat
-build_sensecap.bat
-```
+## ESPHome Fallback
 
-### M5StickC Plus2
-```bat
-build_m5stick.bat
-```
+If HeyClawy has issues, `devices/esp32-s3-box-3/esphome-fallback.yaml` contains the working
+ESPHome/Home Assistant voice pipeline config. Flash via ESPHome dashboard.
 
-### Waveshare ESP32-S3 Audio Board
-```bat
-build_audio_board.bat
-```
+## Key Files
 
-Then flash:
-
-```bat
-set ESPPORT=COM3
-idf.py flash monitor
-```
-
-Replace `COM3` with your actual serial port.
-
-## Configuration
-
-### 1) Create local secrets files
-
-- Copy `secrets_example.txt` to `secrets.txt`
-- Copy `main/include/secrets.h.example` to `main/include/secrets.h`
-
-### 2) Fill required values
-
-At minimum:
-
-- WiFi SSID/password
-- OpenClaw host/port/token
-- Device key (`SECRETS_DEVICE_KEY_HEX`)
-- TTS host/port/api key/voice
-- STT host/port
-
-### 3) Generate/pair device key (recommended)
-
-```bash
-python tools/test_openclaw_auth.py
-```
-
-Use the printed private key hex in `main/include/secrets.h`, then approve the device in OpenClaw.
-
-### 4) Optional runtime tuning
-
-After boot, you can update settings from the device web UI (audio, thresholds, behavior, services, etc.).
-
-## Caveats and Disclaimers
-
-- This project is under active development. Expect rough edges.
-- Keep all secrets local. `secrets.txt` and `main/include/secrets.h` must never be committed.
-- Wake word quality depends on mic conditions and background noise.
-- M5StickC Plus2 uses a passive buzzer, so voice playback quality is lower than codec-based boards.
-- You are responsible for securing your OpenClaw and LAN environment.
+| File | Purpose |
+|------|---------|
+| `build_box3.sh` | Build script for BOX-3 |
+| `components/board/include/board_esp32s3box3.h` | Pin definitions and capability flags |
+| `components/board/board.c` | Hardware init (display, touch, audio, battery) |
+| `components/ui/ui.c` | 320x240 UI layout |
+| `devices/esp32-s3-box-3/PLAN.md` | Original implementation plan |
+| `devices/esp32-s3-box-3/esphome-fallback.yaml` | ESPHome fallback config |
+| `main/include/secrets.h.example` | Secrets template |
