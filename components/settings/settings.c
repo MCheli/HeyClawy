@@ -44,6 +44,7 @@ static void apply_bare_defaults(settings_t *s)
     s->webserver_enabled   = false;
     s->activity_carousel   = true;
     s->auto_notify         = true;
+    strncpy(s->device_name, "HeyClawy", sizeof(s->device_name) - 1);
     s->log_verbosity       = 2;  /* INFO */
     strncpy(s->tts_voice, "alloy", sizeof(s->tts_voice) - 1);
 }
@@ -88,6 +89,7 @@ static void load_from_nvs(settings_t *s)
     NVS_U8(h,  "brightness",  brightness);
     NVS_U32(h, "sleep_ms",    sleep_timeout_ms);
     NVS_U8(h,  "log_verb",    log_verbosity);
+    NVS_STR(h, "dev_name",   device_name);
 
     uint8_t tmp = 0;
     if (nvs_get_u8(h, "ww_sleep", &tmp) == ESP_OK) s->wake_word_in_sleep = tmp;
@@ -130,6 +132,7 @@ static esp_err_t save_to_nvs(const settings_t *s)
     nvs_set_u32(h, "sleep_ms",    s->sleep_timeout_ms);
     nvs_set_u8(h,  "ww_sleep",   s->wake_word_in_sleep ? 1 : 0);
     nvs_set_u8(h,  "log_verb",    s->log_verbosity);
+    nvs_set_str(h, "dev_name",    s->device_name);
     nvs_set_u8(h,  "rgb_on",      s->rgb_enabled ? 1 : 0);
     nvs_set_u8(h,  "start_pat",   s->startup_pattern);
     nvs_set_u8(h,  "web_on",      s->webserver_enabled ? 1 : 0);
@@ -269,6 +272,9 @@ char *settings_to_json(bool include_secrets)
     cJSON_AddBoolToObject(j, "activity_carousel", s->activity_carousel);
     cJSON_AddBoolToObject(j, "auto_notify", s->auto_notify);
 
+    /* Device */
+    cJSON_AddStringToObject(j, "device_name", s->device_name);
+
     /* Logging */
     cJSON_AddNumberToObject(j, "log_verbosity", s->log_verbosity);
 
@@ -336,6 +342,7 @@ esp_err_t settings_from_json(const char *json, size_t len)
     JSON_BOOL("webserver_enabled", webserver_enabled);
     JSON_BOOL("activity_carousel", activity_carousel);
     JSON_BOOL("auto_notify",     auto_notify);
+    JSON_STR("device_name",      device_name);
     JSON_U8("log_verbosity",     log_verbosity);
 
     cJSON_Delete(j);

@@ -69,6 +69,9 @@ typedef struct {
     bool     activity_carousel;    /* carousel between active runs on display */
     bool     auto_notify;          /* auto-TTS non-device-initiated messages */
 
+    /* Device identity */
+    char     device_name[64];      /* e.g. "Office", "Kitchen" — sent to OpenClaw for room context */
+
     /* Logging */
     uint8_t  log_verbosity;        /* 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG, 4=VERBOSE */
 } settings_t;

@@ -251,6 +251,9 @@ void app_main(void)
     strncpy(defaults.tts_voice,     SECRETS_TTS_VOICE,      sizeof(defaults.tts_voice) - 1);
     strncpy(defaults.stt_host,      SECRETS_STT_HOST,       sizeof(defaults.stt_host) - 1);
     defaults.stt_port = SECRETS_STT_PORT;
+#ifdef SECRETS_DEVICE_NAME
+    strncpy(defaults.device_name,  SECRETS_DEVICE_NAME,    sizeof(defaults.device_name) - 1);
+#endif
     defaults.volume = APP_SPEAKER_VOLUME;
     settings_init(&defaults);
 
@@ -371,6 +374,7 @@ void app_main(void)
         .port = cfg->oc_port,
         .token = cfg->oc_token,
         .device_key_hex = cfg->oc_device_key,
+        .device_name = cfg->device_name,
     };
     openclaw_init(&oc_config, on_openclaw_state);
     openclaw_set_notify_cb(on_openclaw_notify);

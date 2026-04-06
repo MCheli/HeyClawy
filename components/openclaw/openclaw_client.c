@@ -92,6 +92,7 @@ static struct {
     char host[64];
     uint16_t port;
     char token[64];
+    char device_name[64];
     char nonce[48];
     int64_t chat_start_time;
     uint32_t msg_id;
@@ -262,7 +263,7 @@ static void send_connect(void)
 
     cJSON *client = cJSON_AddObjectToObject(params, "client");
     cJSON_AddStringToObject(client, "id", "gateway-client");
-    cJSON_AddStringToObject(client, "displayName", "HeyClawy");
+    cJSON_AddStringToObject(client, "displayName", s_oc.device_name[0] ? s_oc.device_name : "HeyClawy");
     cJSON_AddStringToObject(client, "version", "0.2.0");
 #if CONFIG_IDF_TARGET_ESP32S3
     cJSON_AddStringToObject(client, "platform", "esp32s3");
@@ -1057,6 +1058,9 @@ esp_err_t openclaw_init(const openclaw_config_t *config, openclaw_state_cb_t sta
     if (config->token) {
         strncpy(s_oc.token, config->token, sizeof(s_oc.token) - 1);
     }
+    if (config->device_name) {
+        strncpy(s_oc.device_name, config->device_name, sizeof(s_oc.device_name) - 1);
+    }
 
     // Initialize ED25519 device identity from hex seed
     if (config->device_key_hex && strlen(config->device_key_hex) == 64) {
@@ -1141,7 +1145,8 @@ esp_err_t openclaw_chat_send(const char *message, openclaw_chat_cb_t response_cb
 
     /* Prepend dual-response instruction: first line = short label, rest = spoken response.
      * Last line must be [LISTEN] if you expect user to reply, or [END] if conversation is done. */
-    static const char PREFIX[] =
+    static const char PREFIX_FMT[] =
+        "[DEVICE LOCATION: %s]\n"
         "[Respond in TWO parts on separate lines:\n"
         "Line 1: A very brief label (1-5 words max, e.g. \"Done\", \"Yes, on it\", \"Sure thing\")\n"
         "Line 2+: A natural spoken response (1-3 sentences, conversational tone)\n"
@@ -1160,11 +1165,12 @@ esp_err_t openclaw_chat_send(const char *message, openclaw_chat_cb_t response_cb
         "Example:\nVolume up\nI've turned the volume up to 80 percent.\n[DEVICE:volume=80]\n[END]\n"
         "Example 2:\nSure thing\nI've set that up for you. Want me to change anything else?\n[LISTEN]]\n\n";
 
-    size_t prefix_len = sizeof(PREFIX) - 1;
+    const char *name = s_oc.device_name[0] ? s_oc.device_name : "Unknown";
     size_t msg_len = strlen(message);
-    char *full_msg = malloc(prefix_len + msg_len + 1);
+    size_t full_len = sizeof(PREFIX_FMT) + strlen(name) + msg_len + 1;
+    char *full_msg = malloc(full_len);
     if (!full_msg) return ESP_ERR_NO_MEM;
-    memcpy(full_msg, PREFIX, prefix_len);
+    int prefix_len = snprintf(full_msg, full_len, PREFIX_FMT, name);
     memcpy(full_msg + prefix_len, message, msg_len + 1);
 
     cJSON *root = cJSON_CreateObject();
