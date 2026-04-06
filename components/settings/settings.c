@@ -179,6 +179,7 @@ esp_err_t settings_init(const settings_t *defaults)
         COPY_IF_SET(stt_host);
         if (defaults->stt_port) s_settings.stt_port = defaults->stt_port;
         if (defaults->volume) s_settings.volume = defaults->volume;
+        COPY_IF_SET(device_name);
 #undef COPY_IF_SET
     }
 
